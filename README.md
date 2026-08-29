@@ -288,35 +288,7 @@ The individual signals are combined into a final risk score.
 
 ### Command Center
 
-![EvoPay Dashboard](docs/screenshots/dashboard.png)
-
-Central view of transaction activity, risk levels, incidents and system activity.
-
-### Red Team Lab
-
-![Red Team](docs/screenshots/red-team.png)
-
-Controlled generation and evolution of synthetic payment attacks.
-
-### Blue Team
-
-![Blue Team](docs/screenshots/blue-team.png)
-
-Transaction-level risk analysis and mitigation decisions.
-
-### Fraud Network
-
-![Fraud Network](docs/screenshots/fraud-network.png)
-
-Relationship graph for investigating connected entities and suspicious clusters.
-
-### Adversarial Arena
-
-![Adversarial Simulation](docs/screenshots/simulation.png)
-
-Red Team vs Blue Team simulation showing detection, evasion and defense adaptation.
-
-> Screenshots in this section should always represent the current running version of the application.
+<img width="1366" height="768" alt="image" src="https://github.com/user-attachments/assets/866078ab-888a-4a53-a62a-556ed42a7db2" />
 
 ---
 
