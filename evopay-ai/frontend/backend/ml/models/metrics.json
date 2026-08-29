@@ -1,0 +1,18 @@
+{
+  "model_version": "v1.0",
+  "training_samples": 80000,
+  "test_samples": 10000,
+  "accuracy": 0.9986,
+  "precision": 0.9945,
+  "recall": 0.9978,
+  "f1": 0.9962,
+  "roc_auc": 1.0,
+  "pr_auc": 0.9999,
+  "false_positive_rate": 0.0012,
+  "confusion_matrix": {
+    "tn": 8162,
+    "fp": 10,
+    "fn": 4,
+    "tp": 1824
+  }
+}
