@@ -284,14 +284,6 @@ The individual signals are combined into a final risk score.
 
 ---
 
-## Product Screens
-
-### Command Center
-
-<img width="1366" height="768" alt="image" src="https://github.com/user-attachments/assets/866078ab-888a-4a53-a62a-556ed42a7db2" />
-
----
-
 ## Tech Stack
 
 ### Frontend
