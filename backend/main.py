@@ -10,8 +10,8 @@ from fastapi.middleware.cors import CORSMiddleware
 import os
 
 try:
-    from .database import create_db_and_tables, get_connection
-    from .schemas import (
+    from database import create_db_and_tables, get_connection
+    from schemas import (
         ActionRequest,
         AnalyticsResponse,
         AttackEvolveRequest,
@@ -34,9 +34,9 @@ try:
         ThreatPatternRequest,
         TransactionResponse,
     )
-    from .services.risk_engine import analyze_transaction
-    from .services.attack_engine import attack_type_parameters, evolve_attack as evolve_attack_model, generate_attack as generate_attack_model
-    from .services.investigator import investigate_transaction
+    from services.risk_engine import analyze_transaction
+    from services.attack_engine import attack_type_parameters, evolve_attack as evolve_attack_model, generate_attack as generate_attack_model
+    from services.investigator import investigate_transaction
 except ImportError:
     from database import create_db_and_tables, get_connection
     from schemas import (
