@@ -101,17 +101,16 @@ def explain_risk(transaction: dict[str, Any], context: dict[str, Any] | None = N
     transaction = transaction or {}
     context = context or {}
     base_risk = _number(transaction, "risk_score", 0)
-    high_threat = base_risk >= 80 or str(transaction.get("status", "")).upper() == "BLOCKED"
     signals = {
-        "transaction_velocity": _number(transaction, "transaction_velocity", context.get("transaction_velocity", 14 if high_threat else 3.2)),
-        "amount_deviation": _number(transaction, "amount_deviation", context.get("amount_deviation", 2.4 if high_threat else 0.4)),
-        "account_age_days": _number(transaction, "account_age_days", context.get("account_age_days", 21 if high_threat else 340)),
-        "device_sharing": _number(transaction, "device_sharing", context.get("device_sharing", 4 if high_threat else 1)),
-        "location_change": bool(transaction.get("location_change", context.get("location_change", high_threat))),
-        "merchant_frequency": _number(transaction, "merchant_frequency", context.get("merchant_frequency", 8 if high_threat else 2)),
-        "failed_attempts": _number(transaction, "failed_attempts", context.get("failed_attempts", 3 if high_threat else 0)),
-        "historical_spending_deviation": _number(transaction, "historical_spending_deviation", context.get("historical_spending_deviation", 2.1 if high_threat else 0.3)),
-        "connected_high_risk_entities": _number(transaction, "connected_high_risk_entities", context.get("connected_high_risk_entities", 6 if high_threat else 0)),
+        "transaction_velocity": _number(transaction, "transaction_velocity", context.get("transaction_velocity", 0)),
+        "amount_deviation": _number(transaction, "amount_deviation", context.get("amount_deviation", 0)),
+        "account_age_days": _number(transaction, "account_age_days", context.get("account_age_days", 0)),
+        "device_sharing": _number(transaction, "device_sharing", context.get("device_sharing", 0)),
+        "location_change": bool(transaction.get("location_change", context.get("location_change", False))),
+        "merchant_frequency": _number(transaction, "merchant_frequency", context.get("merchant_frequency", 0)),
+        "failed_attempts": _number(transaction, "failed_attempts", context.get("failed_attempts", 0)),
+        "historical_spending_deviation": _number(transaction, "historical_spending_deviation", context.get("historical_spending_deviation", 0)),
+        "connected_high_risk_entities": _number(transaction, "connected_high_risk_entities", context.get("connected_high_risk_entities", 0)),
     }
     scores = {
         "ml_score": calculate_ml_score(transaction, signals),

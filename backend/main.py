@@ -105,15 +105,17 @@ def health_check() -> dict[str, str]:
 @app.get("/api/dashboard", response_model=DashboardResponse)
 def dashboard() -> dict:
     active_threats = len(rows("SELECT 1 FROM incidents WHERE status != 'RESOLVED'"))
-    attacks_sim = len(rows("SELECT 1 FROM attacks"))
+    transactions_total = row("SELECT COUNT(*) AS count FROM transactions")
+    attacks_sim = row("SELECT COUNT(*) AS count FROM attacks")
+    detection = row("SELECT AVG(detection_probability) AS value FROM attacks")
     return {
         "metrics": {
-            "transactions_monitored": 1284392,
-            "active_threats": max(27, active_threats),
-            "attacks_simulated": max(8421, attacks_sim * 100),
-            "detection_rate": 94.8,
-            "false_positive_rate": 1.7,
-            "average_detection_time": 1.8,
+            "transactions_monitored": transactions_total["count"] if transactions_total else 0,
+            "active_threats": active_threats,
+            "attacks_simulated": attacks_sim["count"] if attacks_sim else 0,
+            "mean_detection_score": round(detection["value"], 1) if detection and detection["value"] is not None else None,
+            "false_positive_rate": None,
+            "average_detection_time": None,
         },
         "transactions": rows("SELECT * FROM transactions ORDER BY created_at DESC"),
         "incidents": rows("SELECT * FROM incidents ORDER BY created_at DESC"),
@@ -123,14 +125,14 @@ def dashboard() -> dict:
 def transactions(limit: int = 50, offset: int = 0) -> list[dict]:
     limit = max(1, min(limit, 200))
     offset = max(0, offset)
-    return rows("SELECT * FROM transactions ORDER BY created_at DESC LIMIT ? OFFSET ?", (limit, offset))
+    return [{**item, "synthetic": True} for item in rows("SELECT * FROM transactions ORDER BY created_at DESC LIMIT ? OFFSET ?", (limit, offset))]
 
 @app.get("/api/transactions/{transaction_id}", response_model=TransactionResponse)
 def transaction(transaction_id: str) -> dict:
     result = row("SELECT * FROM transactions WHERE id = ?", (transaction_id,))
     if not result:
         raise HTTPException(404, "Transaction not found")
-    return result
+    return {**result, "synthetic": True}
 
 @app.get("/api/transactions/{transaction_id}/risk", response_model=RiskAnalysisResponse)
 def transaction_risk(transaction_id: str) -> dict:
@@ -174,7 +176,11 @@ def transaction_action(transaction_id: str, payload: ActionRequest) -> dict:
 
 @app.get("/api/attacks", response_model=list[AttackResponse])
 def attacks() -> list[dict]:
-    return rows("SELECT * FROM attacks ORDER BY created_at DESC")
+    response = []
+    for item in rows("SELECT * FROM attacks ORDER BY created_at DESC"):
+        detection_score = item.pop("detection_probability", None)
+        response.append({**item, "detection_score": detection_score, "synthetic": True})
+    return response
 
 @app.post("/api/attacks/generate", response_model=AttackResponse)
 def generate_attack(payload: AttackGenerateRequest) -> dict:
@@ -184,12 +190,28 @@ def generate_attack(payload: AttackGenerateRequest) -> dict:
         generated = generate_attack_model(attack_type, payload.generation)
     except ValueError as error:
         raise HTTPException(400, str(error)) from error
-    attack = (attack_id, payload.strategy, "CRITICAL", "UNDER SIMULATION", generated["accounts"], generated["devices"], 12, int(generated["accounts"]) * 135, now(), generated["attack_type"], json.dumps(generated), generated["attack_score"], generated["detection_probability"], int(generated["evasion_success"]), generated["generation"])
+    merchants = max(1, round(int(generated["accounts"]) / 2))
+    transaction_count = max(1, round(int(generated["accounts"]) * float(generated["transaction_velocity"])))
+    attack = (attack_id, payload.strategy, "CRITICAL", "UNDER SIMULATION", generated["accounts"], generated["devices"], merchants, transaction_count, now(), generated["attack_type"], json.dumps(generated), generated["attack_score"], generated["detection_score"], int(generated["evasion_success"]), generated["generation"])
+    created_at = attack[8]
     with get_connection() as connection:
         connection.execute("INSERT INTO attacks (id, name, severity, status, accounts, devices, merchants, transactions, created_at, attack_type, parameters, attack_score, detection_probability, evasion_success, generation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", attack)
+        customer_ids = [f"SYN-C-{attack_id[3:]}-{index + 1:03d}" for index in range(int(generated["accounts"]))]
+        device_ids = [f"SYN-D-{attack_id[3:]}-{index + 1:03d}" for index in range(int(generated["devices"]))]
+        merchant_ids = [f"SYN-M-{attack_id[3:]}-{index + 1:03d}" for index in range(merchants)]
+        connection.executemany("INSERT INTO customers VALUES (?, ?, ?)", [(item, f"Synthetic customer {index + 1}", "Simulation Lab") for index, item in enumerate(customer_ids)])
+        connection.executemany("INSERT INTO devices VALUES (?, ?, ?)", [(item, "Simulated device", int(generated["attack_score"])) for item in device_ids])
+        connection.executemany("INSERT INTO merchants VALUES (?, ?, ?)", [(item, f"Synthetic merchant {index + 1}", "Simulation Lab") for index, item in enumerate(merchant_ids)])
+        risk_score = int(generated["attack_score"])
+        classification = analyze_transaction({"risk_score": risk_score})["classification"]
+        status = {"LOW": "ALLOWED", "MEDIUM": "VERIFY", "HIGH": "HOLD", "CRITICAL": "BLOCKED"}[classification]
+        connection.executemany("INSERT INTO transactions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
+            (f"SYN-TXN-{attack_id[3:]}-{index + 1:04d}", customer_ids[index % len(customer_ids)], merchant_ids[index % len(merchant_ids)], 1000 + index * 125, "Simulation Lab", "SIMULATED", risk_score, status, device_ids[index % len(device_ids)], created_at)
+            for index in range(transaction_count)
+        ])
         audit(connection, "attack_generated", attack_id, generated)
         connection.commit()
-    return {"id": attack_id, "name": payload.strategy, "status": "UNDER SIMULATION", "severity": "CRITICAL", "merchants": 12, "transactions": int(generated["accounts"]) * 135, **generated, "created_at": attack[8]}
+    return {"id": attack_id, "name": payload.strategy, "status": "UNDER SIMULATION", "severity": "CRITICAL", "merchants": merchants, "transactions": transaction_count, **generated, "created_at": attack[8], "synthetic": True}
 
 @app.post("/api/attacks/evolve", response_model=AttackResponse)
 def evolve_attack(payload: AttackEvolveRequest) -> dict:
@@ -200,38 +222,41 @@ def evolve_attack(payload: AttackEvolveRequest) -> dict:
         attack_type = current.get("attack_type", "composite_attack")
         parameters = attack_type_parameters(attack_type)
         parameters.update(json.loads(current.get("parameters", "{}")))
-        evolved_data = evolve_attack_model({"attack_type": attack_type, "generation": current.get("generation", 1), **parameters, "attack_score": current.get("attack_score", 0), "detection_probability": current.get("detection_probability", 0), "evasion_success": bool(current.get("evasion_success", 0))})
+        parameters.pop("detection_probability", None)
+        evolved_data = evolve_attack_model({"attack_type": attack_type, "generation": current.get("generation", 1), **parameters, "attack_score": current.get("attack_score", 0), "detection_score": current.get("detection_probability", 0), "evasion_success": bool(current.get("evasion_success", 0))})
     except (ValueError, json.JSONDecodeError, TypeError, KeyError) as error:
         raise HTTPException(400, "Stored attack parameters are invalid") from error
     evolved = f"{current['name']} + Device Rotation + Mule Network"
     with get_connection() as connection:
-        connection.execute("UPDATE attacks SET name = ?, status = ?, parameters = ?, accounts = ?, devices = ?, attack_score = ?, detection_probability = ?, evasion_success = ?, generation = ? WHERE id = ?", (evolved, "EVOLVED", json.dumps(evolved_data), evolved_data["accounts"], evolved_data["devices"], evolved_data["attack_score"], evolved_data["detection_probability"], int(evolved_data["evasion_success"]), evolved_data["generation"], payload.attack_id))
+        connection.execute("UPDATE attacks SET name = ?, status = ?, parameters = ?, accounts = ?, devices = ?, attack_score = ?, detection_probability = ?, evasion_success = ?, generation = ? WHERE id = ?", (evolved, "EVOLVED", json.dumps(evolved_data), evolved_data["accounts"], evolved_data["devices"], evolved_data["attack_score"], evolved_data["detection_score"], int(evolved_data["evasion_success"]), evolved_data["generation"], payload.attack_id))
         if evolved_data["evasion_success"]:
             connection.execute("INSERT INTO threat_patterns (name, description, severity) VALUES (?, ?, ?)", ("DEFENSE BLIND SPOT", f"Evasion in generation {evolved_data['generation']} of {evolved_data['attack_type']}", "CRITICAL"))
         audit(connection, "attack_evolved", payload.attack_id, evolved_data)
         connection.commit()
-    current.update({"name": evolved, "status": "EVOLVED", **evolved_data})
+    current.pop("detection_probability", None)
+    current.update({"name": evolved, "status": "EVOLVED", **evolved_data, "synthetic": True})
     return current
 
 @app.get("/api/network", response_model=NetworkResponse)
 def network() -> dict:
+    relationships = rows("""
+        SELECT customer_id AS 'from', device_id AS 'to', 'uses' AS type FROM transactions
+        UNION SELECT device_id AS 'from', merchant_id AS 'to', 'connects' AS type FROM transactions
+        UNION SELECT customer_id AS 'from', merchant_id AS 'to', 'pays' AS type FROM transactions
+    """)
     return {
         "nodes": rows("SELECT id, name, city, 'Customer' AS type FROM customers UNION ALL SELECT id, name, city, 'Merchant' AS type FROM merchants UNION ALL SELECT id, platform AS name, '' AS city, 'Device' AS type FROM devices"),
-        "relationships": [
-            {"from": "C-A81F", "to": "D-X28", "type": "uses"},
-            {"from": "C-C44B", "to": "D-X28", "type": "uses"},
-            {"from": "D-X28", "to": "M-M921", "type": "connects"},
-            {"from": "C-D90E", "to": "D-X28", "type": "uses"},
-            {"from": "D-X28", "to": "M-M772", "type": "connects"},
-        ]
+        "relationships": relationships,
     }
 
 @app.post("/api/simulation/start", response_model=SimulationResponse)
 def start_simulation(payload: SimulationStartRequest) -> dict:
     simulation_id = f"SIM-{uuid4().hex[:8].upper()}"
-    result = {"id": simulation_id, "status": "RUNNING", "stage": 1, "detection_score": 85.8, "created_at": now(), "attack_id": payload.attack_id}
+    attack = row("SELECT detection_probability FROM attacks WHERE id = ?", (payload.attack_id,)) if payload.attack_id else None
+    detection_score = float(attack["detection_probability"]) if attack and attack["detection_probability"] is not None else None
+    result = {"id": simulation_id, "status": "RUNNING", "stage": 1, "detection_score": detection_score, "created_at": now(), "attack_id": payload.attack_id}
     with get_connection() as connection:
-        connection.execute("INSERT INTO simulation_runs (id, status, stage, detection_score, created_at) VALUES (?, ?, ?, ?, ?)", (simulation_id, "RUNNING", 1, 85.8, result["created_at"]))
+        connection.execute("INSERT INTO simulation_runs (id, status, stage, detection_score, created_at) VALUES (?, ?, ?, ?, ?)", (simulation_id, "RUNNING", 1, detection_score, result["created_at"]))
         audit(connection, "simulation_started", simulation_id, {"attack_id": payload.attack_id})
         connection.commit()
     return result
@@ -245,7 +270,7 @@ def simulation(simulation_id: str) -> dict:
 
 @app.get("/api/incidents", response_model=list[IncidentResponse])
 def incidents(limit: int = 50, offset: int = 0) -> list[dict]:
-    return rows("SELECT * FROM incidents ORDER BY created_at DESC LIMIT ? OFFSET ?", (max(1, min(limit, 200)), max(0, offset)))
+    return [{**item, "synthetic": True} for item in rows("SELECT * FROM incidents ORDER BY created_at DESC LIMIT ? OFFSET ?", (max(1, min(limit, 200)), max(0, offset)))]
 
 @app.get("/api/audit", response_model=list[AuditEventResponse])
 def audit_events(limit: int = 100) -> list[dict]:
@@ -267,12 +292,20 @@ def incident_action(incident_id: str, payload: IncidentActionRequest) -> dict:
 @app.get("/api/analytics", response_model=AnalyticsResponse)
 def analytics() -> dict:
     latest_version = row("SELECT version FROM model_versions ORDER BY id DESC LIMIT 1")
+    detection = row("SELECT AVG(detection_probability) AS value FROM attacks")
+    daily = rows("""
+        SELECT day, SUM(total) AS count FROM (
+            SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS total FROM transactions GROUP BY day
+            UNION ALL SELECT substr(created_at, 1, 10), COUNT(*) FROM attacks GROUP BY substr(created_at, 1, 10)
+            UNION ALL SELECT substr(created_at, 1, 10), COUNT(*) FROM incidents GROUP BY substr(created_at, 1, 10)
+        ) GROUP BY day ORDER BY day
+    """)
     return {
-        "detection_rate": 94.8,
-        "false_positive_rate": 1.7,
-        "average_response_time": 1.8,
-        "daily_events": [42, 58, 49, 84, 72, 96, 88],
-        "model_version": latest_version["version"] if latest_version else "v1.0",
+        "mean_detection_score": round(detection["value"], 1) if detection and detection["value"] is not None else None,
+        "false_positive_rate": None,
+        "average_response_time": None,
+        "daily_events": daily,
+        "model_version": latest_version["version"] if latest_version else None,
     }
 
 @app.get("/api/model-versions", response_model=list[ModelVersionResponse])
@@ -308,13 +341,10 @@ def investigate(payload: InvestigationRequest) -> dict:
 @app.post("/api/defense/adapt", response_model=DefenseAdaptResponse)
 def adapt_defense(payload: DefenseAdaptRequest) -> dict:
     before = row("SELECT detection_probability FROM attacks ORDER BY created_at DESC LIMIT 1")
-    before_score = round(100 - float(before["detection_probability"]), 1) if before else 90.6
-    after_score = min(99.9, round(before_score + 4.8, 1))
+    before_score = round(float(before["detection_probability"]), 1) if before and before["detection_probability"] is not None else None
     with get_connection() as connection:
         connection.execute("INSERT INTO threat_patterns (name, description, severity) VALUES (?, ?, ?)", (payload.pattern, "Observed synthetic pattern added to defensive policy", "CRITICAL"))
-        version = f"v1.{connection.execute('SELECT COUNT(*) FROM model_versions').fetchone()[0] + 1}"
-        connection.execute("INSERT INTO model_versions (version, training_samples, precision, recall, f1, created_at) VALUES (?, ?, ?, ?, ?, ?)", (version, 100000, after_score / 100, after_score / 100, after_score / 100, now()))
-        audit(connection, "defense_adapted", payload.pattern, {"before_detection": before_score, "after_detection": after_score, "model_version": version})
+        audit(connection, "defense_pattern_recorded", payload.pattern, {"before_detection_score": before_score, "evaluation_required": True})
         connection.commit()
-    return {"before_detection": before_score, "after_detection": after_score, "model_version": version, "pattern": payload.pattern}
+    return {"before_detection_score": before_score, "after_detection_score": None, "model_version": None, "pattern": payload.pattern}
 

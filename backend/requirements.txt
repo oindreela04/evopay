@@ -7,3 +7,9 @@ passlib
 python-multipart
 openpyxl
 bcrypt
+pandas
+numpy
+scikit-learn
+joblib
+pytest
+httpx2

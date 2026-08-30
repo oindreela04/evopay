@@ -18,11 +18,12 @@ function DetailDrawer({
   const [investigation, setInvestigation] = useState<Investigation | null>(null)
   const [investigating, setInvestigating] = useState(false)
   const [acting, setActing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     setAnalysis(null)
     setInvestigation(null)
-    api.risk(txn.id).then(setAnalysis).catch(console.error)
+    api.risk(txn.id).then(setAnalysis).catch((reason: Error) => setError(reason.message))
   }, [txn.id])
 
   const riskScore = analysis?.risk_score ?? txn.risk_score
@@ -34,8 +35,7 @@ function DetailDrawer({
       const res = await api.action(txn.id, action)
       onUpdateStatus(txn.id, res.status)
     } catch (err) {
-      console.error(err)
-      onUpdateStatus(txn.id, action === 'ALLOW' ? 'ALLOWED' : action === 'BLOCK' ? 'BLOCKED' : action)
+      setError(err instanceof Error ? err.message : 'The action could not be saved.')
     } finally {
       setActing(false)
     }
@@ -47,7 +47,7 @@ function DetailDrawer({
       const res = await api.investigate(txn.id)
       setInvestigation(res.investigation)
     } catch (err) {
-      console.error(err)
+      setError(err instanceof Error ? err.message : 'The investigation could not be opened.')
     } finally {
       setInvestigating(false)
     }
@@ -93,20 +93,20 @@ function DetailDrawer({
       {analysis?.signals && (
         <div className="score-list" style={{ margin: '14px 0 20px' }}>
           <div className="score-bar-row">
-            <div><span>ML Fraud Classifier</span><strong>{Number(analysis.signals.ml_score ?? 92)}</strong></div>
-            <div className="score-bar"><i className="cyan" style={{ width: `${Number(analysis.signals.ml_score ?? 92)}%` }} /></div>
+            <div><span>ML Fraud Classifier</span><strong>{analysis.signals.ml_score == null ? 'Not evaluated' : Number(analysis.signals.ml_score)}</strong></div>
+<div className="score-bar"><i className="cyan" style={{ width: `${Number(analysis.signals.ml_score ?? 0)}%` }} /></div>
           </div>
           <div className="score-bar-row">
-            <div><span>Anomaly Detection</span><strong>{Number(analysis.signals.anomaly_score ?? 88)}</strong></div>
-            <div className="score-bar"><i className="red" style={{ width: `${Number(analysis.signals.anomaly_score ?? 88)}%` }} /></div>
+            <div><span>Anomaly Detection</span><strong>{analysis.signals.anomaly_score == null ? 'Not evaluated' : Number(analysis.signals.anomaly_score)}</strong></div>
+<div className="score-bar"><i className="red" style={{ width: `${Number(analysis.signals.anomaly_score ?? 0)}%` }} /></div>
           </div>
           <div className="score-bar-row">
-            <div><span>Behavioral Scoring</span><strong>{Number(analysis.signals.behavior_score ?? 85)}</strong></div>
-            <div className="score-bar"><i className="amber" style={{ width: `${Number(analysis.signals.behavior_score ?? 85)}%` }} /></div>
+            <div><span>Behavioral Scoring</span><strong>{analysis.signals.behavior_score == null ? 'Not evaluated' : Number(analysis.signals.behavior_score)}</strong></div>
+<div className="score-bar"><i className="amber" style={{ width: `${Number(analysis.signals.behavior_score ?? 0)}%` }} /></div>
           </div>
           <div className="score-bar-row">
-            <div><span>Graph Relationship</span><strong>{Number(analysis.signals.graph_score ?? 94)}</strong></div>
-            <div className="score-bar"><i className="purple" style={{ width: `${Number(analysis.signals.graph_score ?? 94)}%` }} /></div>
+            <div><span>Graph Relationship</span><strong>{analysis.signals.graph_score == null ? 'Not evaluated' : Number(analysis.signals.graph_score)}</strong></div>
+<div className="score-bar"><i className="purple" style={{ width: `${Number(analysis.signals.graph_score ?? 0)}%` }} /></div>
           </div>
         </div>
       )}
@@ -122,12 +122,13 @@ function DetailDrawer({
 
       <div className="flag-reasons">
         <h3>Explainability Signals</h3>
-        {(analysis?.reasons ?? ['High transaction velocity', 'Device linked to multiple accounts']).map((reason) => (
+        {(analysis?.reasons ?? []).map((reason) => (
           <p key={reason}>
             <ShieldAlert size={15} /> {reason}
           </p>
         ))}
       </div>
+      {error && <div className="error-state" style={{ padding: 12, marginTop: 12 }}>{error}</div>}
 
       {investigation && (
         <div className="glass-card" style={{ padding: '14px', margin: '18px 0', borderColor: '#2f6270' }}>
@@ -234,7 +235,7 @@ export default function Transactions() {
     <div className="data-page">
       <div className="data-page-heading" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '24px' }}>
         <div>
-          <p className="eyebrow">Payment Intelligence <span>•</span> Live Stream</p>
+<p className="eyebrow">Payment Intelligence <span>•</span> Recorded synthetic data</p>
           <h1 style={{ margin: 0, fontSize: '32px', fontWeight: 500 }}>Transactions</h1>
           <p className="subheading">Inspect synthetic payment events, signal evaluations, and server decisions.</p>
         </div>
@@ -295,7 +296,7 @@ export default function Transactions() {
           </div>
 
           {loading && <div style={{ padding: '36px', textAlign: 'center' }} className="loading-state">Loading synthetic transaction stream</div>}
-          {error && <div style={{ padding: '24px', textAlign: 'center', color: '#ef747b' }} className="error-state">Transaction API unavailable. Using fallback stream.</div>}
+{error && <div style={{ padding: '24px', textAlign: 'center', color: '#ef747b' }} className="error-state">Transaction API unavailable. No substitute data is being shown.</div>}
 
           {!loading && filteredItems.length === 0 && (
             <div style={{ padding: '48px 24px', textAlign: 'center', color: '#6e8396', fontSize: '12px' }}>

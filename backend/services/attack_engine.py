@@ -42,7 +42,8 @@ def _score(parameters: dict[str, float | int], generation: int) -> dict[str, int
     realism = _clamp(similarity * 58 + (1 - min(abs(velocity - 4) / 8, 1)) * 22 + coordination * 12 + device_ratio * 8)
     detection = _clamp(82 - similarity * 22 - generation * 4 + velocity * 1.2 + device_ratio * 8)
     evasion = detection < 45
-    return {"attack_score": realism, "detection_probability": detection, "evasion_success": evasion}
+    # Policy heuristic on a 0-100 scale; this is not an observed probability.
+    return {"attack_score": realism, "detection_score": detection, "evasion_success": evasion}
 
 
 def generate_attack(attack_type: str = "synthetic_identity", generation: int = 1) -> dict[str, Any]:

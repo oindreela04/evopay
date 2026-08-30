@@ -467,6 +467,10 @@ The training pipeline should generate model artifacts used by the inference laye
 
 All evaluation numbers shown in the project should come from actual model evaluation rather than manually entered values.
 
+### Known limitation
+
+The bundled scikit-learn model artifacts report that they were created with scikit-learn 1.9.0, while the currently tested runtime uses scikit-learn 1.8.0. The test suite can load the artifacts but emits version-mismatch warnings; model compatibility and prediction equivalence across these versions have not been verified. Rebuild the artifacts with the deployed runtime, or align the runtime version, before treating model behavior as validated.
+
 ---
 
 ## API

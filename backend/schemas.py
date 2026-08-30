@@ -77,6 +77,7 @@ class TransactionResponse(BaseModel):
     status: str
     device_id: str
     created_at: str
+    synthetic: bool = True
 
 
 class IncidentResponse(BaseModel):
@@ -89,6 +90,7 @@ class IncidentResponse(BaseModel):
     attack_id: str | None = None
     risk_score: int | None = None
     reasons: str | list[str] | None = None
+    synthetic: bool = True
 
 
 class AttackResponse(BaseModel):
@@ -103,26 +105,27 @@ class AttackResponse(BaseModel):
     created_at: str
     attack_type: str | None = None
     attack_score: int | None = None
-    detection_probability: int | None = None
+    detection_score: int | None = None
     evasion_success: int | bool | None = None
     generation: int | None = 1
+    synthetic: bool = True
 
 
 class SimulationResponse(BaseModel):
     id: str
     status: str
     stage: int
-    detection_score: float
+    detection_score: float | None
     created_at: str
     attack_id: str | None = None
 
 
 class AnalyticsResponse(BaseModel):
-    detection_rate: float
-    false_positive_rate: float
-    average_response_time: float
-    daily_events: list[int]
-    model_version: str | None = "v1.0"
+    mean_detection_score: float | None
+    false_positive_rate: float | None
+    average_response_time: float | None
+    daily_events: list[dict[str, Any]]
+    model_version: str | None = None
 
 
 class NetworkResponse(BaseModel):
@@ -131,9 +134,9 @@ class NetworkResponse(BaseModel):
 
 
 class DefenseAdaptResponse(BaseModel):
-    before_detection: float
-    after_detection: float
-    model_version: str
+    before_detection_score: float | None
+    after_detection_score: float | None
+    model_version: str | None
     pattern: str
 
 

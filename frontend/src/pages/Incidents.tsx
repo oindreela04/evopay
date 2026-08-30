@@ -62,7 +62,7 @@ export default function Incidents() {
       api.audit().then(setAuditEvents).catch(console.error)
     } catch (err) {
       console.error(err)
-      setIncidents((curr) => curr.map((item) => (item.id === id ? { ...item, status } : item)))
+      setError(true)
     }
   }
 
@@ -95,7 +95,7 @@ export default function Incidents() {
     <div className="data-page">
       <div className="data-page-heading" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '24px' }}>
         <div>
-          <p className="eyebrow">Response Queue <span>•</span> Live Triage</p>
+<p className="eyebrow">Response Queue <span>•</span> Recorded incidents</p>
           <h1 style={{ margin: 0, fontSize: '32px', fontWeight: 500 }}>Incidents</h1>
           <p className="subheading">Triage high-signal fraud threats, trigger AI investigation reports, and maintain an auditable state.</p>
         </div>
@@ -166,7 +166,7 @@ export default function Incidents() {
           </div>
 
           {loading && <div className="loading-state" style={{ padding: '32px', textAlign: 'center' }}>Loading incident queue</div>}
-          {error && <div className="error-state" style={{ padding: '16px', textAlign: 'center' }}>Incident service offline. Showing cached state.</div>}
+          {error && <div className="error-state" style={{ padding: '16px', textAlign: 'center' }}>Incident service unavailable. No substitute result is being shown.</div>}
 
           {!loading && filtered.length === 0 && (
             <div style={{ padding: '36px', textAlign: 'center', color: '#6e8396', fontSize: '12px' }}>
@@ -323,7 +323,7 @@ export default function Incidents() {
                 <div key={evt.id} style={{ padding: '8px 10px', background: '#0c1d2e', borderRadius: '5px', border: '1px solid #193144', fontSize: '10px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', color: '#57dcdb', fontFamily: 'DM Mono, monospace' }}>
                     <strong>{evt.event_type}</strong>
-                    <span style={{ color: '#5b7389' }}>{evt.created_at?.slice(11, 19) ?? 'now'}</span>
+                    <span style={{ color: '#5b7389' }}>{evt.created_at?.slice(11, 19) ?? 'Timestamp unavailable'}</span>
                   </div>
                   <div style={{ color: '#889eb2', marginTop: '3px' }}>
                     Target: <b style={{ color: '#d0dfea' }}>{evt.entity_id}</b>

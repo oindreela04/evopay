@@ -18,8 +18,7 @@ import { api, type AuditEvent } from '../lib/api'
 export default function Settings() {
   const [saved, setSaved] = useState(false)
   const [workspaceName, setWorkspaceName] = useState('EvoPay Security Lab')
-  const [env, setEnv] = useState('Synthetic Demo Sandbox')
-  const [offlineFallback, setOfflineFallback] = useState(true)
+  const [env, setEnv] = useState('Synthetic Simulation Sandbox')
   const [allowThreshold, setAllowThreshold] = useState(30)
   const [stepUpThreshold, setStepUpThreshold] = useState(60)
   const [holdThreshold, setHoldThreshold] = useState(80)
@@ -82,7 +81,7 @@ export default function Settings() {
                 onChange={(e) => setEnv(e.target.value)}
                 style={{ width: '100%', height: '36px', background: '#0b1d2e', border: '1px solid #1f374c', borderRadius: '5px', color: '#ecf3f8', padding: '0 12px', fontSize: '12px' }}
               >
-                <option>Synthetic Demo Sandbox</option>
+                <option>Synthetic Simulation Sandbox</option>
                 <option>Staging Simulator</option>
                 <option>Production Verification</option>
               </select>
@@ -90,16 +89,9 @@ export default function Settings() {
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0 0', borderTop: '1px solid #183042' }}>
               <div>
-                <strong style={{ fontSize: '12px', display: 'block', color: '#d8e4ed' }}>Demo Fallback Mode</strong>
-                <span style={{ fontSize: '10px', color: '#71889c' }}>Keep local demo state active if API is unreachable</span>
+                <strong style={{ fontSize: '12px', display: 'block', color: '#d8e4ed' }}>API error policy</strong>
+                <span style={{ fontSize: '10px', color: '#71889c' }}>Unavailable APIs show an error and never substitute results.</span>
               </div>
-              <button
-                className={`secondary-button ${offlineFallback ? 'success-button' : ''}`}
-                style={{ height: '30px', fontSize: '10px' }}
-                onClick={() => setOfflineFallback((v) => !v)}
-              >
-                {offlineFallback ? 'Enabled' : 'Disabled'}
-              </button>
             </div>
           </div>
         </section>

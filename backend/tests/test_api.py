@@ -15,7 +15,65 @@ def client(tmp_path, monkeypatch):
     test_db = tmp_path / "test.db"
     monkeypatch.setattr(database, "DATABASE_PATH", test_db)
     with TestClient(app) as test_client:
+        with database.get_connection() as connection:
+            connection.execute("INSERT INTO customers VALUES (?, ?, ?)", ("C-TEST", "Synthetic test customer", "Test City"))
+            connection.execute("INSERT INTO merchants VALUES (?, ?, ?)", ("M-TEST", "Synthetic test merchant", "Test City"))
+            connection.execute("INSERT INTO devices VALUES (?, ?, ?)", ("D-TEST", "Test device", 90))
+            connection.executemany("INSERT INTO transactions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
+                ("TXN-HIGH", "C-TEST", "M-TEST", 12840, "Test City", "Test", 94, "BLOCKED", "D-TEST", "2026-01-01T00:00:00Z"),
+                ("TXN-LOW", "C-TEST", "M-TEST", 1280, "Test City", "Test", 22, "ALLOWED", "D-TEST", "2026-01-01T00:01:00Z"),
+            ])
+            connection.execute("INSERT INTO incidents (id, title, severity, status, created_at, transaction_id, risk_score, reasons) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", ("INC-TEST", "Fixture incident", "HIGH", "OPEN", "2026-01-01T00:02:00Z", "TXN-HIGH", 94, "[]"))
+            connection.commit()
         yield test_client
+
+
+@pytest.fixture()
+def empty_client(tmp_path, monkeypatch):
+    monkeypatch.setattr(database, "DATABASE_PATH", tmp_path / "empty.db")
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+def test_empty_database_returns_honest_empty_state(empty_client):
+    dashboard = empty_client.get("/api/dashboard").json()
+    assert dashboard["metrics"] == {
+        "transactions_monitored": 0,
+        "active_threats": 0,
+        "attacks_simulated": 0,
+        "mean_detection_score": None,
+        "false_positive_rate": None,
+        "average_detection_time": None,
+    }
+    assert dashboard["transactions"] == []
+    assert dashboard["incidents"] == []
+    assert empty_client.get("/api/transactions").json() == []
+    assert empty_client.get("/api/network").json() == {"nodes": [], "relationships": []}
+    assert empty_client.get("/api/analytics").json() == {
+        "mean_detection_score": None,
+        "false_positive_rate": None,
+        "average_response_time": None,
+        "daily_events": [],
+        "model_version": None,
+    }
+
+
+def test_generated_attack_populates_related_views(empty_client):
+    before_count = len(empty_client.get("/api/transactions?limit=200").json())
+    attack = empty_client.post("/api/attacks/generate", json={"attack_type": "account_takeover", "strategy": "Account Takeover"}).json()
+    transactions = empty_client.get("/api/transactions?limit=200").json()
+    dashboard = empty_client.get("/api/dashboard").json()
+    network = empty_client.get("/api/network").json()
+    analytics = empty_client.get("/api/analytics").json()
+    assert attack["synthetic"] is True
+    assert attack["transactions"] == 19
+    assert len(transactions) - before_count == attack["transactions"]
+    assert all(item["synthetic"] is True and item["id"].startswith("SYN-TXN-") for item in transactions)
+    assert dashboard["metrics"]["transactions_monitored"] == attack["transactions"]
+    assert dashboard["metrics"]["attacks_simulated"] == 1
+    assert dashboard["metrics"]["mean_detection_score"] == attack["detection_score"]
+    assert network["nodes"] and network["relationships"]
+    assert sum(item["count"] for item in analytics["daily_events"]) == attack["transactions"] + 1
 
 
 def test_health(client):
@@ -24,20 +82,20 @@ def test_health(client):
     assert response.json() == {"status": "ok", "service": "evopay-ai"}
 
 
-def test_database_seed_and_pagination(client):
+def test_fixture_and_pagination(client):
     response = client.get("/api/transactions?limit=2&offset=0")
     assert response.status_code == 200
     assert len(response.json()) == 2
 
 
 def test_transaction_detail(client):
-    response = client.get("/api/transactions/TXN-84921")
+    response = client.get("/api/transactions/TXN-HIGH")
     assert response.status_code == 200
     assert response.json()["amount"] == 12840
 
 
 def test_transaction_risk_endpoint(client):
-    response = client.get("/api/transactions/TXN-84921/risk")
+    response = client.get("/api/transactions/TXN-HIGH/risk")
     assert response.status_code == 200
     data = response.json()
     assert "risk_score" in data
@@ -47,7 +105,7 @@ def test_transaction_risk_endpoint(client):
 
 
 def test_transaction_analysis_creates_incident(client):
-    response = client.post("/api/transactions/TXN-84921/analyze")
+    response = client.post("/api/transactions/TXN-HIGH/analyze")
     assert response.status_code == 200
     assert response.json()["recommended_action"] == "BLOCK"
     incidents = client.get("/api/incidents").json()
@@ -56,7 +114,7 @@ def test_transaction_analysis_creates_incident(client):
 
 def test_transaction_actions(client):
     for action in ("ALLOW", "VERIFY", "HOLD", "BLOCK"):
-        response = client.post("/api/transactions/TXN-84918/action", json={"action": action})
+        response = client.post("/api/transactions/TXN-LOW/action", json={"action": action})
         assert response.status_code == 200
         assert response.json()["status"] in {"ALLOWED", "VERIFY", "HOLD", "BLOCKED"}
 
@@ -80,7 +138,7 @@ def test_network_and_investigation(client):
     assert graph.status_code == 200
     assert len(graph.json()["nodes"]) > 0
     assert len(graph.json()["relationships"]) > 0
-    investigation = client.post("/api/investigate", json={"transaction_id": "TXN-84921"})
+    investigation = client.post("/api/investigate", json={"transaction_id": "TXN-HIGH"})
     assert investigation.status_code == 200
     assert investigation.json()["investigation"]["recommended_action"] == "BLOCK"
 
@@ -108,14 +166,14 @@ def test_threat_library_and_adaptation(client):
     assert pattern.status_code == 200
     adapted = client.post("/api/defense/adapt", json={"pattern": "DEFENSE BLIND SPOT"})
     assert adapted.status_code == 200
-    assert adapted.json()["after_detection"] > adapted.json()["before_detection"]
+    assert adapted.json()["after_detection_score"] is None
     assert client.get("/api/threat-library").status_code == 200
 
 
 def test_analytics_and_audit(client):
     analytics = client.get("/api/analytics")
     assert analytics.status_code == 200
-    assert "detection_rate" in analytics.json()
+    assert "mean_detection_score" in analytics.json()
     assert "daily_events" in analytics.json()
     audit = client.get("/api/audit")
     assert audit.status_code == 200
