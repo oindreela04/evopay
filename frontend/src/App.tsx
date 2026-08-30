@@ -202,22 +202,16 @@ function TopBar({ config }: { config: RouteConfig }) {
         <config.icon size={16} />
         {config.title}
       </div>
-      <div className="top-status">
-        <StatusBadge>Live</StatusBadge>
-        <span className="simulation">
-          <span className="sim-dot" /> Simulation idle
-        </span>
+      <div className="top-context">
+        <span>{config.kicker}</span>
+        <b>Controlled environment</b>
       </div>
       <div className="top-actions">
         <button className="icon-button" aria-label="Notifications">
           <Bell size={18} />
           <b className="notification-dot" />
         </button>
-        <div className="user-chip">
-          <div className="user-avatar">AK</div>
-          <span>Alex Kim</span>
-          <ChevronRight size={14} />
-        </div>
+        <div className="user-chip"><div className="user-avatar">SP</div><span>Workspace</span><ChevronRight size={14} /></div>
       </div>
     </header>
   )
