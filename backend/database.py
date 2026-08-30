@@ -1,8 +1,9 @@
 from pathlib import Path
+import os
 import sqlite3
 from typing import Iterator
 
-DATABASE_PATH = Path(__file__).parent / "evopay.db"
+DATABASE_PATH = Path(os.getenv("EVOPAY_DATABASE_PATH", Path(__file__).parent / "evopay.db"))
 
 
 def get_connection() -> sqlite3.Connection:
@@ -40,7 +41,7 @@ def create_db_and_tables() -> None:
         CREATE TABLE IF NOT EXISTS attack_generations (id INTEGER PRIMARY KEY AUTOINCREMENT, attack_id TEXT NOT NULL, generation INTEGER NOT NULL, parameters TEXT NOT NULL, attack_realism REAL NOT NULL, financial_impact REAL NOT NULL, detection_probability REAL NOT NULL, evasion_score REAL NOT NULL, created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS incidents (id TEXT PRIMARY KEY, title TEXT NOT NULL, severity TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, transaction_id TEXT, attack_id TEXT, risk_score INTEGER, reasons TEXT DEFAULT '[]');
         CREATE TABLE IF NOT EXISTS threat_patterns (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, description TEXT NOT NULL, severity TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS simulation_runs (id TEXT PRIMARY KEY, status TEXT NOT NULL, stage INTEGER NOT NULL, detection_score REAL NOT NULL, created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS simulation_runs (id TEXT PRIMARY KEY, status TEXT NOT NULL, stage INTEGER NOT NULL, detection_score REAL, created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS model_versions (id INTEGER PRIMARY KEY AUTOINCREMENT, version TEXT NOT NULL, training_samples INTEGER NOT NULL, precision REAL NOT NULL, recall REAL NOT NULL, f1 REAL NOT NULL, created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS audit_events (id INTEGER PRIMARY KEY AUTOINCREMENT, event_type TEXT NOT NULL, entity_id TEXT NOT NULL, details TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
         CREATE TABLE IF NOT EXISTS system_events (id INTEGER PRIMARY KEY AUTOINCREMENT, event_type TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
@@ -57,11 +58,13 @@ def create_db_and_tables() -> None:
         for column, definition in {"transaction_id": "TEXT", "attack_id": "TEXT", "risk_score": "INTEGER", "reasons": "TEXT DEFAULT '[]'"}.items():
             if column not in incident_columns:
                 connection.execute(f"ALTER TABLE incidents ADD COLUMN {column} {definition}")
-        seed_database(connection)
+        if os.getenv("EVOPAY_SEED_DEMO_DATA", "false").strip().lower() in {"1", "true", "yes", "on"}:
+            seed_demo_database(connection)
         connection.commit()
 
 
-def seed_database(connection: sqlite3.Connection) -> None:
+def seed_demo_database(connection: sqlite3.Connection) -> None:
+    """Insert an explicit, opt-in synthetic demo dataset."""
     if connection.execute("SELECT COUNT(*) FROM customers").fetchone()[0] == 0:
         connection.executemany("INSERT INTO customers VALUES (?, ?, ?)", [("C-A81F", "Customer #A81F", "Kolkata"), ("C-C44B", "Customer #C44B", "Mumbai"), ("C-D90E", "Customer #D90E", "Delhi"), ("C-F302", "Customer #F302", "Bengaluru"), ("C-B73C", "Customer #B73C", "Hyderabad")])
     if connection.execute("SELECT COUNT(*) FROM merchants").fetchone()[0] == 0:

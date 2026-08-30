@@ -22,6 +22,13 @@ class EvoPayAiApiTests(unittest.TestCase):
         cls.test_db = Path(cls.temp_dir.name) / "test.db"
         database.DATABASE_PATH = cls.test_db
         database.create_db_and_tables()
+        with database.get_connection() as connection:
+            connection.execute("INSERT INTO customers VALUES (?, ?, ?)", ("C-TEST", "Synthetic test customer", "Test City"))
+            connection.execute("INSERT INTO merchants VALUES (?, ?, ?)", ("M-TEST", "Synthetic test merchant", "Test City"))
+            connection.execute("INSERT INTO devices VALUES (?, ?, ?)", ("D-TEST", "Test device", 90))
+            connection.executemany("INSERT INTO transactions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [("TXN-HIGH", "C-TEST", "M-TEST", 12840, "Test City", "Test", 94, "BLOCKED", "D-TEST", "2026-01-01T00:00:00Z"), ("TXN-LOW", "C-TEST", "M-TEST", 1280, "Test City", "Test", 22, "ALLOWED", "D-TEST", "2026-01-01T00:01:00Z")])
+            connection.execute("INSERT INTO incidents (id, title, severity, status, created_at, transaction_id, risk_score, reasons) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", ("INC-TEST", "Fixture incident", "HIGH", "OPEN", "2026-01-01T00:02:00Z", "TXN-HIGH", 94, "[]"))
+            connection.commit()
         cls.client = TestClient(app)
 
     @classmethod
@@ -50,12 +57,12 @@ class EvoPayAiApiTests(unittest.TestCase):
         self.assertEqual(len(res.json()), 2)
 
     def test_04_transaction_detail(self):
-        res = self.client.get("/api/transactions/TXN-84921")
+        res = self.client.get("/api/transactions/TXN-HIGH")
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()["amount"], 12840)
 
     def test_05_transaction_risk(self):
-        res = self.client.get("/api/transactions/TXN-84921/risk")
+        res = self.client.get("/api/transactions/TXN-HIGH/risk")
         self.assertEqual(res.status_code, 200)
         data = res.json()
         self.assertIn("risk_score", data)
@@ -64,7 +71,7 @@ class EvoPayAiApiTests(unittest.TestCase):
         self.assertIn("reasons", data)
 
     def test_06_transaction_analysis_incident_creation(self):
-        res = self.client.post("/api/transactions/TXN-84921/analyze")
+        res = self.client.post("/api/transactions/TXN-HIGH/analyze")
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()["recommended_action"], "BLOCK")
         incidents = self.client.get("/api/incidents").json()
@@ -72,7 +79,7 @@ class EvoPayAiApiTests(unittest.TestCase):
 
     def test_07_transaction_actions(self):
         for action in ("ALLOW", "VERIFY", "HOLD", "BLOCK"):
-            res = self.client.post("/api/transactions/TXN-84918/action", json={"action": action})
+            res = self.client.post("/api/transactions/TXN-LOW/action", json={"action": action})
             self.assertEqual(res.status_code, 200)
             self.assertIn(res.json()["status"], {"ALLOWED", "VERIFY", "HOLD", "BLOCKED"})
 
@@ -93,7 +100,7 @@ class EvoPayAiApiTests(unittest.TestCase):
         self.assertEqual(graph.status_code, 200)
         self.assertTrue(len(graph.json()["nodes"]) > 0)
         self.assertTrue(len(graph.json()["relationships"]) > 0)
-        inv = self.client.post("/api/investigate", json={"transaction_id": "TXN-84921"})
+        inv = self.client.post("/api/investigate", json={"transaction_id": "TXN-HIGH"})
         self.assertEqual(inv.status_code, 200)
         self.assertEqual(inv.json()["investigation"]["recommended_action"], "BLOCK")
 
@@ -118,12 +125,12 @@ class EvoPayAiApiTests(unittest.TestCase):
         self.assertEqual(pattern.status_code, 200)
         adapted = self.client.post("/api/defense/adapt", json={"pattern": "DEFENSE BLIND SPOT"})
         self.assertEqual(adapted.status_code, 200)
-        self.assertGreater(adapted.json()["after_detection"], adapted.json()["before_detection"])
+        self.assertIsNone(adapted.json()["after_detection_score"])
 
     def test_14_analytics_and_audit(self):
         analytics = self.client.get("/api/analytics")
         self.assertEqual(analytics.status_code, 200)
-        self.assertIn("detection_rate", analytics.json())
+        self.assertIn("mean_detection_score", analytics.json())
         self.assertIn("daily_events", analytics.json())
         audit = self.client.get("/api/audit")
         self.assertEqual(audit.status_code, 200)
