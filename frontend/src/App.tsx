@@ -11,7 +11,8 @@ import Transactions from './pages/Transactions'
 import Incidents from './pages/Incidents'
 import Analytics from './pages/Analytics'
 import Settings from './pages/Settings'
-import { api, type DashboardData } from './lib/api'
+import { ApiError, api, type DashboardData, type User } from './lib/api'
+import Auth from './pages/Auth'
 
 type RouteConfig = { title: string; kicker: string; icon: typeof LayoutDashboard; description: string }
 const routes: Record<string, RouteConfig> = {
@@ -53,13 +54,22 @@ function Dashboard({ navigate }: { navigate: (path: string) => void }) {
   </div>
 }
 
-function TopBar({ config }: { config: RouteConfig }) { return <header className="top-bar"><div className="mobile-title"><config.icon size={16} />{config.title}</div><div className="top-context"><span>{config.kicker}</span><b>Controlled environment</b></div><div className="top-actions"><button className="icon-button" aria-label="Notifications"><Bell size={18} /></button><div className="user-chip"><div className="user-avatar">EV</div><span>Workspace</span><ChevronRight size={14} /></div></div></header> }
+function TopBar({ config, user, onLogout }: { config: RouteConfig; user: User; onLogout: () => void }) { const initials = user.display_name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase(); return <header className="top-bar"><div className="mobile-title"><config.icon size={16} />{config.title}</div><div className="top-context"><span>{config.kicker}</span><b>Controlled environment</b></div><div className="top-actions"><button className="icon-button" aria-label="Notifications"><Bell size={18} /></button><div className="user-chip"><div className="user-avatar">{initials}</div><span><b>{user.display_name}</b><small>{user.email}</small></span><button className="logout-button" onClick={onLogout}>Sign out</button></div></div></header> }
 
 function App() {
+  const [user, setUser] = useState<User | null>(null)
+  const [restoring, setRestoring] = useState(true)
+  const [sessionError, setSessionError] = useState<string | null>(null)
+  const [sessionAttempt, setSessionAttempt] = useState(0)
   const [path, setPath] = useState(window.location.pathname in routes ? window.location.pathname : '/dashboard')
+  useEffect(() => { let active = true; setRestoring(true); setSessionError(null); api.me().then((value) => { if (active) setUser(value) }).catch((reason) => { if (!active) return; if (reason instanceof ApiError && reason.status === 401) setUser(null); else setSessionError(reason instanceof Error ? reason.message : 'Unable to restore the secure session.') }).finally(() => { if (active) setRestoring(false) }); const expired = () => { if (active) setUser(null) }; window.addEventListener('evopay:session-expired', expired); return () => { active = false; window.removeEventListener('evopay:session-expired', expired) } }, [sessionAttempt])
   useEffect(() => { const onPop = () => setPath(window.location.pathname in routes ? window.location.pathname : '/dashboard'); window.addEventListener('popstate', onPop); return () => window.removeEventListener('popstate', onPop) }, [])
   const navigate = (nextPath: string) => { window.history.pushState({}, '', nextPath); setPath(nextPath) }
   const config = routes[path] ?? routes['/dashboard']
-  return <AppShell path={path} onNavigate={navigate}><TopBar config={config} /><AnimatePresence mode="wait"><motion.main key={path} className="page-content" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: .22 }}>{path === '/dashboard' && <Dashboard navigate={navigate} />}{path === '/red-team' && <CommandDashboard navigate={navigate} />}{path === '/simulation' && <Simulation />}{path === '/transactions' && <Transactions />}{path === '/network' && <Network />}{path === '/blue-team' && <BlueTeam />}{path === '/incidents' && <Incidents />}{path === '/analytics' && <Analytics />}{path === '/settings' && <Settings />}</motion.main></AnimatePresence></AppShell>
+  const logout = async () => { try { await api.logout() } finally { setUser(null) } }
+  if (restoring) return <div className="session-restore"><div className="brand-symbol"><ShieldCheck size={18} /></div><span>Restoring secure session</span></div>
+  if (sessionError) return <div className="session-restore"><div className="brand-symbol"><TriangleAlert size={18} /></div><h1>Connection unavailable</h1><p>{sessionError}</p><button className="primary-button" onClick={() => setSessionAttempt((value) => value + 1)}>Retry connection</button></div>
+  if (!user) return <Auth onAuthenticated={setUser} />
+  return <AppShell path={path} onNavigate={navigate}><TopBar config={config} user={user} onLogout={logout} /><AnimatePresence mode="wait"><motion.main key={path} className="page-content" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: .22 }}>{path === '/dashboard' && <Dashboard navigate={navigate} />}{path === '/red-team' && <CommandDashboard navigate={navigate} />}{path === '/simulation' && <Simulation />}{path === '/transactions' && <Transactions />}{path === '/network' && <Network />}{path === '/blue-team' && <BlueTeam />}{path === '/incidents' && <Incidents />}{path === '/analytics' && <Analytics />}{path === '/settings' && <Settings />}</motion.main></AnimatePresence></AppShell>
 }
 export default App

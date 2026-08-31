@@ -7,6 +7,18 @@ class HealthResponse(BaseModel):
     service: str
 
 
+class AuthRequest(BaseModel):
+    email: str
+    password: str
+    display_name: str | None = None
+
+
+class UserResponse(BaseModel):
+    id: str
+    email: str
+    display_name: str
+
+
 class ActionRequest(BaseModel):
     action: str
 

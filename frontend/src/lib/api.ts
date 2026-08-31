@@ -19,20 +19,36 @@ export type AuditEvent = { id: number; event_type: string; entity_id: string; de
 export type ModelVersion = { id: number; version: string; training_samples: number; precision: number; recall: number; f1: number; created_at: string }
 export type ThreatPattern = { id: number; name: string; description: string; severity: string }
 export type NetworkData = { nodes: { id: string; name: string; city: string; type: string }[]; relationships: { from: string; to: string; type: string }[] }
+export type User = { id: string; email: string; display_name: string }
+
+function cookie(name: string): string | undefined {
+  return document.cookie.split('; ').find((item) => item.startsWith(`${name}=`))?.split('=').slice(1).join('=')
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response
-  try { response = await fetch(`${API_BASE}${path}`, { ...init, headers: { 'Content-Type': 'application/json', ...init?.headers } }) }
-  catch (cause) { throw new ApiError('Unable to reach the EvoPay API. Check that the backend is running and the API URL is correct.', path, null, cause) }
+  const method = (init?.method ?? 'GET').toUpperCase()
+  const csrf = !['GET', 'HEAD', 'OPTIONS'].includes(method) ? cookie('evopay_csrf') : undefined
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), 8000)
+  try { response = await fetch(`${API_BASE}${path}`, { ...init, signal: controller.signal, credentials: 'include', headers: { 'Content-Type': 'application/json', ...(csrf ? { 'X-CSRF-Token': csrf } : {}), ...init?.headers } }) }
+  catch (cause) { throw new ApiError(cause instanceof DOMException && cause.name === 'AbortError' ? 'The EvoPay API request timed out. Check that the backend is running and retry.' : 'Unable to reach the EvoPay API. Check that the backend is running and the API URL is correct.', path, null, cause) }
+  finally { window.clearTimeout(timeout) }
   if (!response.ok) {
     let detail = `The EvoPay API returned ${response.status}.`
     try { const body = await response.json() as { detail?: string }; if (body.detail) detail = body.detail } catch { /* no JSON error body */ }
+    if (response.status === 401 && !path.startsWith('/auth/')) window.dispatchEvent(new Event('evopay:session-expired'))
     throw new ApiError(detail, path, response.status)
   }
+  if (response.status === 204) return undefined as T
   try { return await response.json() as T } catch (cause) { throw new ApiError('The EvoPay API returned invalid JSON.', path, response.status, cause) }
 }
 
 export const api = {
+  me: () => request<User>('/auth/me'),
+  signup: (email: string, password: string, displayName: string) => request<User>('/auth/signup', { method: 'POST', body: JSON.stringify({ email, password, display_name: displayName }) }),
+  login: (email: string, password: string) => request<User>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
+  logout: () => request<void>('/auth/logout', { method: 'POST' }),
   dashboard: () => request<DashboardData>('/dashboard'),
   transactions: (limit = 50, offset = 0) => request<Transaction[]>(`/transactions?limit=${limit}&offset=${offset}`),
   transaction: (id: string) => request<Transaction>(`/transactions/${id}`),

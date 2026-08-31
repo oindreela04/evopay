@@ -23,27 +23,31 @@ def connection_scope() -> Iterator[sqlite3.Connection]:
 def create_db_and_tables() -> None:
     with get_connection() as connection:
         connection.executescript("""
-        CREATE TABLE IF NOT EXISTS customers (id TEXT PRIMARY KEY, name TEXT NOT NULL, city TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS merchants (id TEXT PRIMARY KEY, name TEXT NOT NULL, city TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, platform TEXT NOT NULL, risk_score INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, display_name TEXT NOT NULL, password_hash TEXT NOT NULL, created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS user_sessions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, csrf_hash TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);
+        CREATE INDEX IF NOT EXISTS idx_user_sessions_token_hash ON user_sessions(token_hash);
+        CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id);
+        CREATE TABLE IF NOT EXISTS customers (id TEXT PRIMARY KEY, name TEXT NOT NULL, city TEXT NOT NULL, user_id TEXT);
+        CREATE TABLE IF NOT EXISTS merchants (id TEXT PRIMARY KEY, name TEXT NOT NULL, city TEXT NOT NULL, user_id TEXT);
+        CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, platform TEXT NOT NULL, risk_score INTEGER NOT NULL, user_id TEXT);
         CREATE TABLE IF NOT EXISTS transactions (
             id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, merchant_id TEXT NOT NULL, amount INTEGER NOT NULL,
             location TEXT NOT NULL, payment_method TEXT NOT NULL, risk_score INTEGER NOT NULL,
-            status TEXT NOT NULL, device_id TEXT NOT NULL, created_at TEXT NOT NULL
+            status TEXT NOT NULL, device_id TEXT NOT NULL, created_at TEXT NOT NULL, user_id TEXT
         );
         CREATE TABLE IF NOT EXISTS attacks (
             id TEXT PRIMARY KEY, name TEXT NOT NULL, severity TEXT NOT NULL, status TEXT NOT NULL,
             accounts INTEGER NOT NULL, devices INTEGER NOT NULL, merchants INTEGER NOT NULL,
             transactions INTEGER NOT NULL, created_at TEXT NOT NULL, attack_type TEXT DEFAULT 'composite_attack',
             parameters TEXT DEFAULT '{}', attack_score INTEGER DEFAULT 0, detection_probability INTEGER DEFAULT 0,
-            evasion_success INTEGER DEFAULT 0, generation INTEGER DEFAULT 1
+            evasion_success INTEGER DEFAULT 0, generation INTEGER DEFAULT 1, user_id TEXT
         );
         CREATE TABLE IF NOT EXISTS attack_generations (id INTEGER PRIMARY KEY AUTOINCREMENT, attack_id TEXT NOT NULL, generation INTEGER NOT NULL, parameters TEXT NOT NULL, attack_realism REAL NOT NULL, financial_impact REAL NOT NULL, detection_probability REAL NOT NULL, evasion_score REAL NOT NULL, created_at TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS incidents (id TEXT PRIMARY KEY, title TEXT NOT NULL, severity TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, transaction_id TEXT, attack_id TEXT, risk_score INTEGER, reasons TEXT DEFAULT '[]');
-        CREATE TABLE IF NOT EXISTS threat_patterns (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, description TEXT NOT NULL, severity TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS simulation_runs (id TEXT PRIMARY KEY, status TEXT NOT NULL, stage INTEGER NOT NULL, detection_score REAL, created_at TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS model_versions (id INTEGER PRIMARY KEY AUTOINCREMENT, version TEXT NOT NULL, training_samples INTEGER NOT NULL, precision REAL NOT NULL, recall REAL NOT NULL, f1 REAL NOT NULL, created_at TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS audit_events (id INTEGER PRIMARY KEY AUTOINCREMENT, event_type TEXT NOT NULL, entity_id TEXT NOT NULL, details TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE IF NOT EXISTS incidents (id TEXT PRIMARY KEY, title TEXT NOT NULL, severity TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, transaction_id TEXT, attack_id TEXT, risk_score INTEGER, reasons TEXT DEFAULT '[]', user_id TEXT);
+        CREATE TABLE IF NOT EXISTS threat_patterns (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, description TEXT NOT NULL, severity TEXT NOT NULL, user_id TEXT);
+        CREATE TABLE IF NOT EXISTS simulation_runs (id TEXT PRIMARY KEY, status TEXT NOT NULL, stage INTEGER NOT NULL, detection_score REAL, created_at TEXT NOT NULL, user_id TEXT, attack_id TEXT);
+        CREATE TABLE IF NOT EXISTS model_versions (id INTEGER PRIMARY KEY AUTOINCREMENT, version TEXT NOT NULL, training_samples INTEGER NOT NULL, precision REAL NOT NULL, recall REAL NOT NULL, f1 REAL NOT NULL, created_at TEXT NOT NULL, user_id TEXT);
+        CREATE TABLE IF NOT EXISTS audit_events (id INTEGER PRIMARY KEY AUTOINCREMENT, event_type TEXT NOT NULL, entity_id TEXT NOT NULL, details TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP, user_id TEXT);
         CREATE TABLE IF NOT EXISTS system_events (id INTEGER PRIMARY KEY AUTOINCREMENT, event_type TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
         """)
         attack_columns = {column[1] for column in connection.execute("PRAGMA table_info(attacks)").fetchall()}
@@ -58,6 +62,17 @@ def create_db_and_tables() -> None:
         for column, definition in {"transaction_id": "TEXT", "attack_id": "TEXT", "risk_score": "INTEGER", "reasons": "TEXT DEFAULT '[]'"}.items():
             if column not in incident_columns:
                 connection.execute(f"ALTER TABLE incidents ADD COLUMN {column} {definition}")
+        ownership_tables = ("customers", "merchants", "devices", "transactions", "attacks", "incidents", "threat_patterns", "model_versions", "audit_events")
+        for table in ownership_tables:
+            columns = {column[1] for column in connection.execute(f"PRAGMA table_info({table})").fetchall()}
+            if "user_id" not in columns:
+                connection.execute(f"ALTER TABLE {table} ADD COLUMN user_id TEXT")
+            connection.execute(f"CREATE INDEX IF NOT EXISTS idx_{table}_user_id ON {table}(user_id)")
+        simulation_columns = {column[1] for column in connection.execute("PRAGMA table_info(simulation_runs)").fetchall()}
+        for column in ("user_id", "attack_id"):
+            if column not in simulation_columns:
+                connection.execute(f"ALTER TABLE simulation_runs ADD COLUMN {column} TEXT")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_simulation_runs_user_id ON simulation_runs(user_id)")
         if os.getenv("EVOPAY_SEED_DEMO_DATA", "false").strip().lower() in {"1", "true", "yes", "on"}:
             seed_demo_database(connection)
         connection.commit()
@@ -66,13 +81,13 @@ def create_db_and_tables() -> None:
 def seed_demo_database(connection: sqlite3.Connection) -> None:
     """Insert an explicit, opt-in synthetic demo dataset."""
     if connection.execute("SELECT COUNT(*) FROM customers").fetchone()[0] == 0:
-        connection.executemany("INSERT INTO customers VALUES (?, ?, ?)", [("C-A81F", "Customer #A81F", "Kolkata"), ("C-C44B", "Customer #C44B", "Mumbai"), ("C-D90E", "Customer #D90E", "Delhi"), ("C-F302", "Customer #F302", "Bengaluru"), ("C-B73C", "Customer #B73C", "Hyderabad")])
+        connection.executemany("INSERT INTO customers (id, name, city) VALUES (?, ?, ?)", [("C-A81F", "Customer #A81F", "Kolkata"), ("C-C44B", "Customer #C44B", "Mumbai"), ("C-D90E", "Customer #D90E", "Delhi"), ("C-F302", "Customer #F302", "Bengaluru"), ("C-B73C", "Customer #B73C", "Hyderabad")])
     if connection.execute("SELECT COUNT(*) FROM merchants").fetchone()[0] == 0:
-        connection.executemany("INSERT INTO merchants VALUES (?, ?, ?)", [("M-M921", "Merchant #M921", "Kolkata"), ("M-M104", "Merchant #M104", "Mumbai"), ("M-M772", "Merchant #M772", "Delhi"), ("M-M318", "Merchant #M318", "Bengaluru"), ("M-M442", "Merchant #M442", "Chennai")])
+        connection.executemany("INSERT INTO merchants (id, name, city) VALUES (?, ?, ?)", [("M-M921", "Merchant #M921", "Kolkata"), ("M-M104", "Merchant #M104", "Mumbai"), ("M-M772", "Merchant #M772", "Delhi"), ("M-M318", "Merchant #M318", "Bengaluru"), ("M-M442", "Merchant #M442", "Chennai")])
     if connection.execute("SELECT COUNT(*) FROM devices").fetchone()[0] == 0:
-        connection.executemany("INSERT INTO devices VALUES (?, ?, ?)", [("D-X28", "Android", 96), ("D-A11", "iOS", 31), ("D-Q41", "Android", 68), ("D-P07", "Web", 22)])
+        connection.executemany("INSERT INTO devices (id, platform, risk_score) VALUES (?, ?, ?)", [("D-X28", "Android", 96), ("D-A11", "iOS", 31), ("D-Q41", "Android", 68), ("D-P07", "Web", 22)])
     if connection.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 0:
-        connection.executemany("INSERT INTO transactions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
+        connection.executemany("INSERT INTO transactions (id, customer_id, merchant_id, amount, location, payment_method, risk_score, status, device_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
             ("TXN-84921", "C-A81F", "M-M921", 12840, "Kolkata", "UPI", 94, "BLOCKED", "D-X28", "2026-08-26T16:42:09Z"),
             ("TXN-84920", "C-C44B", "M-M104", 2499, "Mumbai", "Card", 71, "VERIFY", "D-Q41", "2026-08-26T16:42:04Z"),
             ("TXN-84919", "C-D90E", "M-M772", 48200, "Delhi", "Net Banking", 89, "BLOCKED", "D-X28", "2026-08-26T16:41:58Z"),
